@@ -116,16 +116,11 @@ function ssPrivateFromXML(xml)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    safe = false
-    for arg in ARGS
-        if arg == "-s" || arg == "--safe"
-            safe = true
-        end
-    end
+    safe = any(a -> a in ("-s", "--safe"), ARGS)
 
-    try
+    bits = try
         print("How many bits? ")
-        bits = parse(Int64, readline())
+        parse(Int64, readline())
     catch
         println("We needed a positive integer!")
         exit(1)

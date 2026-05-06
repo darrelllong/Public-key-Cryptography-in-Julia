@@ -134,7 +134,7 @@ end
 
 function _readBigInt(r::_DerReader)::Union{BigInt, Nothing}
     c = _readTLV(r, 0x02)
-    c === nothing || isempty(c) && return nothing
+    (c === nothing || isempty(c)) && return nothing
     c[1] & 0x80 != 0 && return nothing      # negative not allowed
     body = if length(c) > 1 && c[1] == 0x00
         c[2] & 0x80 == 0 && return nothing  # non-minimal encoding

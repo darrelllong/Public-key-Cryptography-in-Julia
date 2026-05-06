@@ -85,18 +85,31 @@ Where each field is made up of:
 =#
 
 function publicKeyToStr(e, n)
+    # Each integer is encoded as an SSH "mpint" (RFC 4251 §5): a 32-bit big-endian
+    # length followed by the minimal big-endian byte representation of the value,
+    # with a leading 0x00 byte prepended whenever the high bit of the first byte
+    # would otherwise be set (so the value reads as positive). Without that pad
+    # byte, ssh-keygen rejects the key — and so does GitHub.
+    function mpint(x)
+        bs = digits(x, base=256, pad=byteLength(x))[end:-1:1]   # MS-first
+        if !isempty(bs) && bs[1] & 0x80 != 0
+            pushfirst!(bs, 0x00)
+        end
+        bs
+    end
+
     key_type = b"ssh-rsa"
     key = UInt8[]
-
-    eLen = byteLength(e)
-    nLen = byteLength(n)
-
     append!(key, reinterpret(UInt8, [hton(UInt32(length(key_type)))]))
     append!(key, key_type)
-    append!(key, reinterpret(UInt8, [hton(UInt32(eLen))]))
-    append!(key, digits(e, base=256, pad=eLen)[end:-1:1])
-    append!(key, reinterpret(UInt8, [hton(UInt32(nLen))]))
-    append!(key, digits(n, base=256, pad=nLen)[end:-1:1])
+
+    e_bytes = mpint(e)
+    append!(key, reinterpret(UInt8, [hton(UInt32(length(e_bytes)))]))
+    append!(key, e_bytes)
+
+    n_bytes = mpint(n)
+    append!(key, reinterpret(UInt8, [hton(UInt32(length(n_bytes)))]))
+    append!(key, n_bytes)
 
     "ssh-rsa " * base64encode(key)
 end
@@ -170,7 +183,7 @@ end
 function rsaPublicFromPkcs1Der(der::Vector{UInt8})
     outer = _DerReader(der, 1)
     seq = _readTLV(outer, 0x30)
-    seq === nothing || !_derReaderDone(outer) && return nothing
+    (seq === nothing || !_derReaderDone(outer)) && return nothing
     r = _DerReader(seq, 1)
     n = _readBigInt(r);  n === nothing && return nothing
     e = _readBigInt(r);  e === nothing && return nothing
@@ -194,12 +207,12 @@ end
 function rsaPublicFromSpkiDer(der::Vector{UInt8})
     outer = _DerReader(der, 1)
     seq = _readTLV(outer, 0x30)
-    seq === nothing || !_derReaderDone(outer) && return nothing
+    (seq === nothing || !_derReaderDone(outer)) && return nothing
     r = _DerReader(seq, 1)
     alg_seq = _readTLV(r, 0x30);    alg_seq === nothing && return nothing
     bs      = _readTLV(r, 0x03);    bs === nothing && return nothing
     _derReaderDone(r) || return nothing
-    isempty(bs) || bs[1] != 0x00    && return nothing
+    (isempty(bs) || bs[1] != 0x00)  && return nothing
     alg_r = _DerReader(alg_seq, 1)
     oid   = _readTLV(alg_r, 0x06);  oid === nothing && return nothing
     _readTLV(alg_r, 0x05)           === nothing && return nothing
@@ -229,9 +242,9 @@ end
 function rsaPrivateFromPkcs1Der(der::Vector{UInt8})
     outer = _DerReader(der, 1)
     seq = _readTLV(outer, 0x30)
-    seq === nothing || !_derReaderDone(outer) && return nothing
+    (seq === nothing || !_derReaderDone(outer)) && return nothing
     r = _DerReader(seq, 1)
-    ver = _readSmallUInt(r);  ver === nothing || ver != 0x00 && return nothing
+    ver = _readSmallUInt(r);  (ver === nothing || ver != 0x00) && return nothing
     n   = _readBigInt(r);  n === nothing && return nothing
     e   = _readBigInt(r);  e === nothing && return nothing
     d   = _readBigInt(r);  d === nothing && return nothing
@@ -260,9 +273,9 @@ end
 function rsaPrivateFromPkcs8Der(der::Vector{UInt8})
     outer = _DerReader(der, 1)
     seq = _readTLV(outer, 0x30)
-    seq === nothing || !_derReaderDone(outer) && return nothing
+    (seq === nothing || !_derReaderDone(outer)) && return nothing
     r = _DerReader(seq, 1)
-    ver     = _readSmallUInt(r);   ver === nothing || ver != 0x00 && return nothing
+    ver     = _readSmallUInt(r);   (ver === nothing || ver != 0x00) && return nothing
     alg_seq = _readTLV(r, 0x30);  alg_seq === nothing && return nothing
     inner   = _readTLV(r, 0x04);  inner === nothing && return nothing
     _derReaderDone(r) || return nothing
@@ -298,16 +311,11 @@ function rsaPrivateFromXML(xml)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    safe = false
-    for arg in ARGS
-        if arg == "-s" || arg == "--safe"
-            safe = true
-        end
-    end
+    safe = any(a -> a in ("-s", "--safe"), ARGS)
 
-    try
+    bits = try
         print("How many bits? ")
-        bits = parse(Int64, readline())
+        parse(Int64, readline())
     catch
         println("We needed a positive integer!")
         exit(1)
