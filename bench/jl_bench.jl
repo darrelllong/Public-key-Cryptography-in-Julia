@@ -21,7 +21,15 @@ const BITS = parse(Int, ARGS[3])
 const N    = parse(Int, ARGS[4])
 
 using Random
-Random.seed!(20260506)
+# Encryption and decryption use one key per invocation, drawn from a fixed
+# seed, so that every invocation measures the same key.  Key generation is
+# seeded randomly: with a fixed seed every invocation would generate the same
+# keys, and the readings would repeat with period N.
+if OP == "keygen"
+    Random.seed!()
+else
+    Random.seed!(20260506)
+end
 
 const SRC = joinpath(@__DIR__, "..", "src")
 
